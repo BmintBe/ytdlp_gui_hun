@@ -12,8 +12,7 @@ OPTIONS = {
         'PyQt6.sip',
     ],
     'excludes': ['tkinter', 'matplotlib', 'numpy'],
-    'zip_unsafe': ['PyQt6'],
-    'no_strip': True,
+    'no_zip': True,
     'site_packages': True,
     'plist': {
         'CFBundleName': 'yt-dlp GUI',
