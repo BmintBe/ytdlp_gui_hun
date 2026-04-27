@@ -27,7 +27,7 @@ jobs:
           path: "dist/yt-dlp GUI.exe"
 
   macos:
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: actions/setup-python@v5.6.0
