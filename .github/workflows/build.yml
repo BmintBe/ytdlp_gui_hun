@@ -22,8 +22,6 @@ jobs:
           pip install PyQt6 pyinstaller pillow
           python -c "
 from PIL import Image
-import struct, zlib
-
 img = Image.open('icon.png').resize((256,256), Image.LANCZOS).convert('RGBA')
 img.save('icon.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
 "
@@ -40,7 +38,7 @@ img.save('icon.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,1
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.11"
-      - name: PNG → ICNS konvertálás
+      - name: PNG -> ICNS
         run: |
           mkdir icon.iconset
           sips -z 16   16   icon.png --out icon.iconset/icon_16x16.png
