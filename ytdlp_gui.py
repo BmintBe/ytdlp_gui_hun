@@ -16,35 +16,31 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPalette, QColor
 
-# ── Platform ──────────────────────────────────────────────────────────────────
-IS_WIN  = sys.platform == "win32"
-IS_MAC  = sys.platform == "darwin"
-IS_LIN  = sys.platform.startswith("linux")
+IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 
-YTDLP_BIN   = "yt-dlp.exe" if IS_WIN else "yt-dlp"
-GITHUB_ASSET = "yt-dlp.exe" if IS_WIN else ("yt-dlp_macos" if IS_MAC else "yt-dlp_linux")
-
+YTDLP_BIN   = "yt-dlp.exe"    if IS_WIN else "yt-dlp"
+FFMPEG_BIN  = "ffmpeg.exe"    if IS_WIN else "ffmpeg"
 POPEN_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WIN else {}
+DEFAULT_DL  = Path.home() / "Downloads" / "%(title)s.%(ext)s"
 
-DEFAULT_DL = (
-    Path.home() / "Downloads" / "%(title)s.%(ext)s"
-)
+GITHUB_YTDLP_ASSET  = "yt-dlp.exe" if IS_WIN else ("yt-dlp_macos" if IS_MAC else "yt-dlp_linux")
+FFMPEG_MAC_URL = "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip"
 
-# ── yt-dlp útvonal meghatározás ───────────────────────────────────────────────
-def get_ytdlp_path() -> str:
-    own_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-    local = own_dir / YTDLP_BIN
+
+def get_bin_path(name: str) -> str:
+    own = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    local = own / name
     if local.exists():
         return str(local)
-    found = shutil.which("yt-dlp")
+    found = shutil.which(name.replace(".exe", "") if IS_WIN else name)
     return found or ""
 
 
-def get_ytdlp_version(ytdlp_path: str) -> str:
+def get_version(path: str) -> str:
     try:
-        r = subprocess.run([ytdlp_path, "--version"],
-                           capture_output=True, text=True, **POPEN_FLAGS)
-        return r.stdout.strip()
+        r = subprocess.run([path, "--version"], capture_output=True, text=True, **POPEN_FLAGS)
+        return r.stdout.strip().splitlines()[0]
     except Exception:
         return "ismeretlen"
 
@@ -55,60 +51,121 @@ class UpdateThread(QThread):
     progress_signal = pyqtSignal(int)
     finished_signal = pyqtSignal(bool, str)
 
-    def __init__(self, dest_dir: str):
+    def __init__(self, dest_dir: str, mode: str = "ytdlp"):
         super().__init__()
         self.dest_dir = dest_dir
+        self.mode = mode  # "ytdlp" or "ffmpeg"
 
     def run(self):
-        api = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
         try:
-            self.log_signal.emit("GitHub API lekérdezése...")
-            req = urllib.request.Request(api, headers={"User-Agent": "ytdlp-gui"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read())
-
-            tag = data["tag_name"]
-            self.log_signal.emit(f"Legújabb verzió: {tag}")
-
-            dl_url = next(
-                (a["browser_download_url"] for a in data.get("assets", [])
-                 if a["name"] == GITHUB_ASSET),
-                None
-            )
-            if not dl_url:
-                self.finished_signal.emit(False, f"{GITHUB_ASSET} nem található a release-ben")
-                return
-
-            dest = Path(self.dest_dir) / YTDLP_BIN
-            tmp  = Path(self.dest_dir) / (YTDLP_BIN + ".tmp")
-
-            self.log_signal.emit(f"Letöltés: {dl_url}")
-            req2 = urllib.request.Request(dl_url, headers={"User-Agent": "ytdlp-gui"})
-            with urllib.request.urlopen(req2, timeout=120) as resp2:
-                total = int(resp2.headers.get("Content-Length", 0))
-                downloaded = 0
-                with open(tmp, "wb") as f:
-                    while True:
-                        buf = resp2.read(65536)
-                        if not buf:
-                            break
-                        f.write(buf)
-                        downloaded += len(buf)
-                        if total:
-                            self.progress_signal.emit(int(downloaded / total * 100))
-
-            # macOS / Linux: futtatási jog beállítása
-            if not IS_WIN:
-                tmp.chmod(tmp.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-
-            tmp.replace(dest)
-            self.log_signal.emit(f"Frissítve -> {dest}")
-            self.finished_signal.emit(True, str(dest))
-
+            if self.mode == "ytdlp":
+                self._update_ytdlp()
+            else:
+                self._update_ffmpeg()
         except urllib.error.URLError as e:
             self.finished_signal.emit(False, f"Hálózati hiba: {e.reason}")
         except Exception as e:
             self.finished_signal.emit(False, str(e))
+
+    def _download(self, url, dest_path):
+        req = urllib.request.Request(url, headers={"User-Agent": "ytdlp-gui"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            with open(dest_path, "wb") as f:
+                while True:
+                    buf = resp.read(65536)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    downloaded += len(buf)
+                    if total:
+                        self.progress_signal.emit(int(downloaded / total * 100))
+
+    def _make_exec(self, path: Path):
+        if not IS_WIN:
+            path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    def _update_ytdlp(self):
+        api = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+        self.log_signal.emit("yt-dlp: GitHub API lekérdezése...")
+        req = urllib.request.Request(api, headers={"User-Agent": "ytdlp-gui"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+        tag = data["tag_name"]
+        self.log_signal.emit(f"yt-dlp legújabb verzió: {tag}")
+        dl_url = next(
+            (a["browser_download_url"] for a in data.get("assets", [])
+             if a["name"] == GITHUB_YTDLP_ASSET), None)
+        if not dl_url:
+            self.finished_signal.emit(False, "yt-dlp bináris nem található")
+            return
+        dest = Path(self.dest_dir) / YTDLP_BIN
+        tmp  = Path(self.dest_dir) / (YTDLP_BIN + ".tmp")
+        self.log_signal.emit("yt-dlp letöltése...")
+        self._download(dl_url, tmp)
+        self._make_exec(tmp)
+        tmp.replace(dest)
+        self.log_signal.emit(f"yt-dlp frissítve → {dest}")
+        self.finished_signal.emit(True, "ytdlp")
+
+    def _update_ffmpeg(self):
+        dest_dir = Path(self.dest_dir)
+        dest = dest_dir / FFMPEG_BIN
+        tmp  = dest_dir / (FFMPEG_BIN + ".tmp")
+
+        if IS_WIN:
+            # Windows: GitHub ffmpeg-builds
+            api = "https://api.github.com/repos/BtbN/ffmpeg-builds/releases/latest"
+            self.log_signal.emit("ffmpeg: GitHub API lekérdezése...")
+            req = urllib.request.Request(api, headers={"User-Agent": "ytdlp-gui"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+            dl_url = next(
+                (a["browser_download_url"] for a in data.get("assets", [])
+                 if "win64" in a["name"] and "lgpl" in a["name"] and a["name"].endswith(".zip")),
+                None)
+            if not dl_url:
+                self.finished_signal.emit(False, "ffmpeg zip nem található")
+                return
+            self.log_signal.emit("ffmpeg letöltése (zip)...")
+            zip_tmp = dest_dir / "ffmpeg.zip"
+            self._download(dl_url, zip_tmp)
+            self.log_signal.emit("ffmpeg kicsomagolása...")
+            import zipfile
+            with zipfile.ZipFile(zip_tmp) as z:
+                for name in z.namelist():
+                    if name.endswith("bin/ffmpeg.exe"):
+                        with z.open(name) as src, open(tmp, "wb") as dst:
+                            dst.write(src.read())
+                        break
+            zip_tmp.unlink(missing_ok=True)
+        elif IS_MAC:
+            # macOS: evermeet.cx statikus build
+            self.log_signal.emit("ffmpeg letöltése (macOS)...")
+            import zipfile, io
+            req = urllib.request.Request(FFMPEG_MAC_URL, headers={"User-Agent": "ytdlp-gui"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                data = b""
+                while True:
+                    buf = resp.read(65536)
+                    if not buf:
+                        break
+                    data += buf
+                    if total:
+                        self.progress_signal.emit(int(len(data) / total * 100))
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                for name in z.namelist():
+                    if name == "ffmpeg":
+                        with z.open(name) as src, open(tmp, "wb") as dst:
+                            dst.write(src.read())
+                        break
+
+        self._make_exec(tmp)
+        tmp.replace(dest)
+        self.log_signal.emit(f"ffmpeg frissítve → {dest}")
+        self.finished_signal.emit(True, "ffmpeg")
 
 
 # ── Letöltő szál ──────────────────────────────────────────────────────────────
@@ -158,14 +215,15 @@ class YtDlpGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("yt-dlp Letöltő")
-        self.setMinimumWidth(740)
-        self.setMinimumHeight(680)
-        self._thread     = None
-        self._upd_thread = None
-        self._ytdlp      = get_ytdlp_path()
+        self.setMinimumWidth(760)
+        self.setMinimumHeight(700)
+        self._thread      = None
+        self._upd_thread  = None
+        self._ytdlp       = get_bin_path(YTDLP_BIN)
+        self._ffmpeg      = get_bin_path(FFMPEG_BIN)
         self._apply_dark_theme()
         self._build_ui()
-        self._refresh_ytdlp_status()
+        self._refresh_status()
 
     def _apply_dark_theme(self):
         app = QApplication.instance()
@@ -203,9 +261,9 @@ class YtDlpGUI(QMainWindow):
             QPushButton#btn_download:hover{{background:#74a8f5;}}
             QPushButton#btn_download:disabled{{background:{PNL.name()};color:#6c7086;}}
             QPushButton#btn_stop{{background:{RED.name()};color:{BG.name()};border:none;}}
-            QPushButton#btn_update{{background:#313148;border:1px solid {ACC.name()};color:{ACC.name()};}}
-            QPushButton#btn_update:hover{{background:{ACC.name()};color:{BG.name()};}}
-            QPushButton#btn_update:disabled{{border-color:#44445a;color:#6c7086;}}
+            QPushButton.update_btn{{background:#313148;border:1px solid {ACC.name()};color:{ACC.name()};padding:5px 10px;}}
+            QPushButton.update_btn:hover{{background:{ACC.name()};color:{BG.name()};}}
+            QPushButton.update_btn:disabled{{border-color:#44445a;color:#6c7086;}}
             QProgressBar{{background:{SURF.name()};border:1px solid {PNL.name()};
                 border-radius:6px;text-align:center;color:{TXT.name()};height:18px;}}
             QProgressBar::chunk{{background:{ACC.name()};border-radius:5px;}}
@@ -220,20 +278,32 @@ class YtDlpGUI(QMainWindow):
         root = QWidget(); self.setCentralWidget(root)
         lay = QVBoxLayout(root); lay.setSpacing(10); lay.setContentsMargins(16,16,16,16)
 
-        # ── yt-dlp állapot ──
-        grp_ytdlp = QGroupBox("  yt-dlp")
-        yd_lay = QHBoxLayout(grp_ytdlp)
+        # ── Eszközök állapota ──
+        grp_tools = QGroupBox("  Eszközök")
+        tools_lay = QGridLayout(grp_tools); tools_lay.setSpacing(6)
+
         self.lbl_ytdlp_ver  = QLabel("...")
-        self.lbl_ytdlp_path = QLabel("")
-        self.lbl_ytdlp_path.setStyleSheet("color:#6c7086;font-size:11px;")
-        info_col = QVBoxLayout(); info_col.setSpacing(2)
-        info_col.addWidget(self.lbl_ytdlp_ver); info_col.addWidget(self.lbl_ytdlp_path)
-        yd_lay.addLayout(info_col); yd_lay.addStretch()
-        self.btn_update = QPushButton("Frissítés (GitHub)")
-        self.btn_update.setObjectName("btn_update")
-        self.btn_update.clicked.connect(self._start_update)
-        yd_lay.addWidget(self.btn_update)
-        lay.addWidget(grp_ytdlp)
+        self.lbl_ytdlp_path = QLabel(""); self.lbl_ytdlp_path.setStyleSheet("color:#6c7086;font-size:10px;")
+        self.btn_upd_ytdlp  = QPushButton("Frissítés")
+        self.btn_upd_ytdlp.setProperty("class", "update_btn")
+        self.btn_upd_ytdlp.clicked.connect(lambda: self._start_update("ytdlp"))
+
+        self.lbl_ffmpeg_ver  = QLabel("...")
+        self.lbl_ffmpeg_path = QLabel(""); self.lbl_ffmpeg_path.setStyleSheet("color:#6c7086;font-size:10px;")
+        self.btn_upd_ffmpeg  = QPushButton("Letöltés")
+        self.btn_upd_ffmpeg.setProperty("class", "update_btn")
+        self.btn_upd_ffmpeg.clicked.connect(lambda: self._start_update("ffmpeg"))
+
+        tools_lay.addWidget(QLabel("yt-dlp:"),           0, 0)
+        tools_lay.addWidget(self.lbl_ytdlp_ver,          0, 1)
+        tools_lay.addWidget(self.lbl_ytdlp_path,         1, 1)
+        tools_lay.addWidget(self.btn_upd_ytdlp,          0, 2, 2, 1)
+        tools_lay.addWidget(QLabel("ffmpeg:"),            2, 0)
+        tools_lay.addWidget(self.lbl_ffmpeg_ver,         2, 1)
+        tools_lay.addWidget(self.lbl_ffmpeg_path,        3, 1)
+        tools_lay.addWidget(self.btn_upd_ffmpeg,         2, 2, 2, 1)
+        tools_lay.setColumnStretch(1, 1)
+        lay.addWidget(grp_tools)
 
         # ── URL ──
         grp_url = QGroupBox("  URL")
@@ -264,7 +334,7 @@ class YtDlpGUI(QMainWindow):
         fmt_lay.addWidget(self.cmb_format, 1, 1)
         lay.addWidget(grp_fmt)
 
-        # ── Opciók ──
+        # ── Beállítások ──
         grp_opt = QGroupBox("  Beállítások")
         opt_lay = QGridLayout(grp_opt); opt_lay.setSpacing(6)
         self.chk_subs      = self._chk("Feliratok letöltése",     opt_lay, 0, 0)
@@ -281,8 +351,7 @@ class YtDlpGUI(QMainWindow):
         grp_out = QGroupBox("  Mentési hely")
         vl = QVBoxLayout(grp_out); vl.setSpacing(4)
         row = QHBoxLayout()
-        self.out_template = QLineEdit()
-        self.out_template.setText(str(DEFAULT_DL))
+        self.out_template = QLineEdit(); self.out_template.setText(str(DEFAULT_DL))
         self.out_template.textChanged.connect(self._update_cmd)
         btn_browse = QPushButton("Tallózás...")
         btn_browse.clicked.connect(self._browse_dir)
@@ -292,11 +361,10 @@ class YtDlpGUI(QMainWindow):
         vl.addLayout(row); vl.addWidget(hint)
         lay.addWidget(grp_out)
 
-        # ── Parancs előnézet ──
+        # ── Parancs ──
         grp_cmd = QGroupBox("  Generált parancs")
-        cmd_lay = QVBoxLayout(grp_cmd)
-        self.cmd_display = QTextEdit(); self.cmd_display.setReadOnly(True); self.cmd_display.setFixedHeight(52)
-        cmd_lay.addWidget(self.cmd_display)
+        self.cmd_display = QTextEdit(); self.cmd_display.setReadOnly(True); self.cmd_display.setFixedHeight(50)
+        QVBoxLayout(grp_cmd).addWidget(self.cmd_display)
         lay.addWidget(grp_cmd)
 
         # ── Gombok ──
@@ -319,7 +387,7 @@ class YtDlpGUI(QMainWindow):
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self.status_label)
-        self.log_box = QTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMinimumHeight(110)
+        self.log_box = QTextEdit(); self.log_box.setReadOnly(True); self.log_box.setMinimumHeight(100)
         lay.addWidget(self.log_box)
         self._update_cmd()
 
@@ -327,38 +395,53 @@ class YtDlpGUI(QMainWindow):
         cb = QCheckBox(text); cb.stateChanged.connect(self._update_cmd)
         grid.addWidget(cb, row, col); return cb
 
-    def _refresh_ytdlp_status(self):
-        self._ytdlp = get_ytdlp_path()
+    def _refresh_status(self):
+        self._ytdlp = get_bin_path(YTDLP_BIN)
+        self._ffmpeg = get_bin_path(FFMPEG_BIN)
+
         if self._ytdlp:
-            ver = get_ytdlp_version(self._ytdlp)
-            self.lbl_ytdlp_ver.setText(f"yt-dlp  {ver}")
+            ver = get_version(self._ytdlp)
+            self.lbl_ytdlp_ver.setText(f"✔  {ver}")
             self.lbl_ytdlp_ver.setStyleSheet("color:#a6e3a1;font-weight:bold;")
             self.lbl_ytdlp_path.setText(self._ytdlp)
+            self.btn_upd_ytdlp.setText("Frissítés")
         else:
-            self.lbl_ytdlp_ver.setText("yt-dlp nem talalhato – kattints a Frissites gombra!")
+            self.lbl_ytdlp_ver.setText("✘  Nincs telepítve")
             self.lbl_ytdlp_ver.setStyleSheet("color:#f38ba8;font-weight:bold;")
             self.lbl_ytdlp_path.setText("")
+            self.btn_upd_ytdlp.setText("Letöltés")
+
+        if self._ffmpeg:
+            ver = get_version(self._ffmpeg)
+            self.lbl_ffmpeg_ver.setText(f"✔  {ver}")
+            self.lbl_ffmpeg_ver.setStyleSheet("color:#a6e3a1;font-weight:bold;")
+            self.lbl_ffmpeg_path.setText(self._ffmpeg)
+            self.btn_upd_ffmpeg.setText("Frissítés")
+        else:
+            self.lbl_ffmpeg_ver.setText("✘  Nincs – videó+hang összefűzés nem működik!")
+            self.lbl_ffmpeg_ver.setStyleSheet("color:#f9e2af;font-weight:bold;")
+            self.lbl_ffmpeg_path.setText("")
+            self.btn_upd_ffmpeg.setText("Letöltés")
+
         self._update_cmd()
 
-    def _start_update(self):
+    def _start_update(self, mode: str):
         dest_dir = (Path(sys.executable).parent if getattr(sys, "frozen", False)
                     else Path(__file__).parent)
-        self.btn_update.setEnabled(False); self.btn_download.setEnabled(False)
+        self._set_buttons_enabled(False)
         self.progress.setValue(0)
-        self._set_status("yt-dlp letöltése...", "#89b4fa")
-        self._log("Frissítés indítása...")
-        self._upd_thread = UpdateThread(str(dest_dir))
+        self._set_status(f"{'yt-dlp' if mode == 'ytdlp' else 'ffmpeg'} letöltése...", "#89b4fa")
+        self._upd_thread = UpdateThread(str(dest_dir), mode)
         self._upd_thread.log_signal.connect(self._log)
         self._upd_thread.progress_signal.connect(self.progress.setValue)
         self._upd_thread.finished_signal.connect(self._on_update_finished)
         self._upd_thread.start()
 
     def _on_update_finished(self, ok, msg):
-        self.btn_update.setEnabled(True); self.btn_download.setEnabled(True)
+        self._set_buttons_enabled(True)
         self._set_status("Frissítve!" if ok else f"Hiba: {msg}", "#a6e3a1" if ok else "#f38ba8")
-        self._log(msg)
         if ok:
-            self._refresh_ytdlp_status()
+            self._refresh_status()
 
     def _on_type_change(self):
         audio = self.cmb_type.currentIndex() == 2
@@ -373,11 +456,16 @@ class YtDlpGUI(QMainWindow):
     def _build_args(self):
         ytdlp = self._ytdlp or "yt-dlp"
         args  = [ytdlp]
+
+        if self._ffmpeg:
+            args += ["--ffmpeg-location", self._ffmpeg]
+
         t = self.cmb_type.currentIndex(); qi = self.cmb_quality.currentIndex()
         fmt = self.cmb_format.currentText()
         q_map = {0:"bestvideo+bestaudio/best", 1:"bestvideo[height<=1080]+bestaudio/best",
                  2:"bestvideo[height<=720]+bestaudio/best",  3:"bestvideo[height<=480]+bestaudio/best",
                  4:"bestvideo[height<=360]+bestaudio/best",  5:"worstvideo+worstaudio/worst"}
+
         if t == 2:
             args += ["-x","--audio-format", fmt if fmt != "– eredeti –" else "mp3","--audio-quality","0"]
         elif t == 1:
@@ -415,10 +503,11 @@ class YtDlpGUI(QMainWindow):
 
     def _start_download(self):
         if not self._ytdlp:
-            QMessageBox.warning(self, "Hiba", "yt-dlp nem talalhato!\nKattints a Frissites gombra.")
-            return
+            QMessageBox.warning(self, "Hiba", "yt-dlp nem található!"); return
         if not self.url_edit.text().strip():
             self._set_status("Adj meg egy URL-t!", "#f38ba8"); return
+        if not self._ffmpeg and self.cmb_type.currentIndex() != 2:
+            self._log("⚠ ffmpeg nincs telepítve – a videó és hang külön fájlként töltődik le!")
         args = self._build_args()
         self._log("\n" + " ".join(args))
         self.progress.setValue(0); self._set_status("Letöltés...", "#89b4fa")
@@ -437,6 +526,11 @@ class YtDlpGUI(QMainWindow):
         self.progress.setValue(100 if ok else self.progress.value())
         self._set_status(msg, "#a6e3a1" if ok else "#f38ba8")
         self._log(msg); self._reset_buttons()
+
+    def _set_buttons_enabled(self, enabled: bool):
+        self.btn_download.setEnabled(enabled)
+        self.btn_upd_ytdlp.setEnabled(enabled)
+        self.btn_upd_ffmpeg.setEnabled(enabled)
 
     def _reset_buttons(self):
         self.btn_download.setEnabled(True); self.btn_stop.setEnabled(False)
