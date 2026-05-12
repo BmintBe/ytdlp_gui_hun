@@ -1,8 +1,10 @@
 from setuptools import setup
+import os
 
 APP = ['ytdlp_gui.py']
 OPTIONS = {
     'argv_emulation': False,
+    'iconfile': 'icon.icns',
     'packages': ['PyQt6'],
     'includes': [
         'PyQt6.QtWidgets',
