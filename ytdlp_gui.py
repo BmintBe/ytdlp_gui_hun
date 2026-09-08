@@ -460,8 +460,8 @@ class YtDlpGUI(QMainWindow):
         if self._ffmpeg:
             args += ["--ffmpeg-location", self._ffmpeg]
 
-        # YouTube kliens beállítás - SABR streaming megkerülése
-        args += ["--extractor-args", "youtube:player_client=ios,mweb"]
+        # YouTube kliens - tv_embedded nem igényel JS-t és elkerüli a SABR-t
+        args += ["--extractor-args", "youtube:player_client=tv_embedded"]
 
         t = self.cmb_type.currentIndex(); qi = self.cmb_quality.currentIndex()
         fmt = self.cmb_format.currentText()
