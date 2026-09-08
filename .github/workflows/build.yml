@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+  release:
+    types: [ created ]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -26,6 +28,16 @@ jobs:
         with:
           name: yt-dlp-GUI-Windows
           path: "dist/yt-dlp GUI.exe"
+      - name: Release-hez csatolás
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: "dist/yt-dlp GUI.exe"
+          asset_name: "yt-dlp-GUI-Windows.exe"
+          asset_content_type: application/octet-stream
 
   macos:
     runs-on: macos-14
@@ -57,3 +69,13 @@ jobs:
         with:
           name: yt-dlp-GUI-macOS
           path: dist/yt-dlp-GUI-macOS.zip
+      - name: Release-hez csatolás
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: dist/yt-dlp-GUI-macOS.zip
+          asset_name: yt-dlp-GUI-macOS.zip
+          asset_content_type: application/zip
