@@ -30,14 +30,9 @@ jobs:
           path: "dist/yt-dlp GUI.exe"
       - name: Release-hez csatolás
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: "dist/yt-dlp GUI.exe"
-          asset_name: "yt-dlp-GUI-Windows.exe"
-          asset_content_type: application/octet-stream
+          files: "dist/yt-dlp GUI.exe"
 
   macos:
     runs-on: macos-14
@@ -71,11 +66,6 @@ jobs:
           path: dist/yt-dlp-GUI-macOS.zip
       - name: Release-hez csatolás
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: dist/yt-dlp-GUI-macOS.zip
-          asset_name: yt-dlp-GUI-macOS.zip
-          asset_content_type: application/zip
+          files: dist/yt-dlp-GUI-macOS.zip
