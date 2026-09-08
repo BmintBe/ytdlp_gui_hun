@@ -460,6 +460,13 @@ class YtDlpGUI(QMainWindow):
         if self._ffmpeg:
             args += ["--ffmpeg-location", self._ffmpeg]
 
+        # JavaScript futtatókörnyezet (Node.js ha elérhető, különben android kliens fallback)
+        node = shutil.which("node")
+        if node:
+            args += ["--extractor-args", f"youtube:js_interpreter=nodejs:{node}"]
+        else:
+            args += ["--extractor-args", "youtube:player_client=android,web"]
+
         t = self.cmb_type.currentIndex(); qi = self.cmb_quality.currentIndex()
         fmt = self.cmb_format.currentText()
         q_map = {0:"bestvideo+bestaudio/best", 1:"bestvideo[height<=1080]+bestaudio/best",
