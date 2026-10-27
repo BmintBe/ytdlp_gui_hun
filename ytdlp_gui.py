@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QScrollArea, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPalette, QColor
+from PyQt6.QtGui import QPalette, QColor, QIcon
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -791,9 +791,28 @@ class YtDlpGUI(QMainWindow):
         self.log_box.verticalScrollBar().setValue(self.log_box.verticalScrollBar().maximum())
 
 
+def _load_icon() -> QIcon:
+    """Ikont keres az app könyvtárában vagy a PyInstaller _MEIPASS mappájában."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).parent
+        candidates += [base / "icon.ico", base / "icon.png", base / "icon.icns"]
+    script_dir = Path(__file__).parent
+    candidates += [script_dir / "icon.ico", script_dir / "icon.png", script_dir / "icon.icns"]
+    for p in candidates:
+        if p.exists():
+            return QIcon(str(p))
+    return QIcon()
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setApplicationName("yt-dlp GUI")
+    icon = _load_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     win = YtDlpGUI()
+    if not icon.isNull():
+        win.setWindowIcon(icon)
     win.show()
     sys.exit(app.exec())
